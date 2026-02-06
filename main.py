@@ -137,27 +137,27 @@ class SSHPlugin(Star):
                     except:
                         pass
                     del self.sessions[user_id]
-                    yield event.plain_result("🔌 已断开 SSH 连接。")
+                    yield event.plain_result("✅ 已断开 SSH 连接。")
                 else:
-                    yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
+                    yield event.plain_result("♨️ 当前没有活跃的 SSH 连接。")
             return
 
         if not cmd:
-            yield event.plain_result("请输入命令。用法: /ssh <命令>")
+            yield event.plain_result("💫 请输入命令！用法: /ssh <命令>")
             return
 
         # Ensure connection
         try:
             session = await self._get_or_create_session(user_id)
         except ValueError:
-            yield event.plain_result("❌ 插件未配置，请在后台配置 SSH 连接信息。")
+            yield event.plain_result("❌ 插件未配置，请在Astrbot中配置 SSH 连接信息。")
             return
         except Exception as e:
-            yield event.plain_result(f"❌ 连接失败: {e}")
+            yield event.plain_result(f"❌ 连接失败惹: {e}")
             return
 
         # Execute
-        yield event.plain_result(f"执行中...")
+        yield event.plain_result(f"执行中，请稍后...")
         result = await self._execute_command(session, cmd)
         yield event.plain_result(result)
 
