@@ -1,0 +1,6 @@
+name: "astrbot_plugin_ssh"
+display_name: "远程SSH执行器"
+desc: "SSH 远程命令执行插件，支持 LLM 调用"
+version: "v1.0.Beta"
+author: "5060ti个马力的6999"
+repo: ""

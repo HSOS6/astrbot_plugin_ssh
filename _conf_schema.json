@@ -1,0 +1,41 @@
+{
+    "host": {
+        "description": "SSH 主机地址(必填)‼️",
+        "type": "string",
+        "default": "192.168.1.128",
+        "hint": "服务器 IP 或域名，例如: 192.168.1.114",
+        "obvious_hint": true
+    },
+    "port": {
+        "description": "SSH 端口",
+        "type": "int",
+        "default": 22,
+        "hint": "默认一般为 22"
+    },
+    "username": {
+        "description": "SSH 用户名(必填)‼️",
+        "type": "string",
+        "default": "root",
+        "hint": "登录服务器的用户名",
+        "obvious_hint": true
+    },
+    "password": {
+        "description": "SSH 密码",
+        "type": "string",
+        "default": "123456",
+        "hint": "登录密码（明文存储，请注意安全）",
+        "obvious_hint": true
+    },
+    "timeout": {
+        "description": "连接超时时间（秒）",
+        "type": "int",
+        "default": 10,
+        "hint": "SSH 连接超时"
+    },
+    "idle_timeout": {
+        "description": "闲置断开时间（分钟）",
+        "type": "int",
+        "default": 30,
+        "hint": "SSH 会话无操作自动断开的时间"
+    }
+}
