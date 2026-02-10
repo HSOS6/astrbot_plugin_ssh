@@ -9,7 +9,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Star, register, Context
 from astrbot.api import logger
 
-@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.0.Beta")
+@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.1.Beta")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
