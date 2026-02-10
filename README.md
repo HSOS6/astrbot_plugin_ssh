@@ -1,4 +1,4 @@
-# 远程SSH执行器
+# 远程SSH执行器(astrbot_plugin_ssh)
 
 一个功能弱小的 AstrBot 插件，允许您通过聊天窗口连接远程 SSH 服务器并执行命令。支持交互式 Shell 会话、状态保持、LLM 函数调用，并具备不完善的安全保护机制。
 
@@ -21,6 +21,12 @@
 ### 1. 安装插件
 
 将本插件文件夹 `astrbot_plugin_ssh` 放置于 AstrBot 的 `data/plugins/` 目录下。
+
+或者使用从链接安装，输入
+```
+https://github.com/HSOS6/astrbot_plugin_ssh
+```
+<img width="625" height="784" alt="image" src="https://github.com/user-attachments/assets/7cc1af7d-642c-4c56-a62d-9db8193ad945" />
 
 ### 2. 配置文件
 
