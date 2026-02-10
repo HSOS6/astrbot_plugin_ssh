@@ -85,7 +85,8 @@ class SSHPlugin(Star):
                 self.sessions[user_id] = {
                     "conn": conn,
                     "last_active": datetime.now(),
-                    "cwd": "~"
+                    "cwd": "~",
+                    "history": [] # Store execution history: list of {"cmd": str, "output": str, "time": datetime}
                 }
                 logger.info(f"SSH Plugin: Connected to {host} successfully.")
                 return self.sessions[user_id]
@@ -116,9 +117,24 @@ class SSHPlugin(Star):
             
             if result.stderr:
                 output += f"\nSTDERR:\n{result.stderr}"
+
+            # Limit to last 50 lines
+            lines = output.strip().split('\n')
+            if len(lines) > 50:
+                lines = lines[-50:]
+            final_result = "\n".join(lines) if output.strip() else "(无新输出)"
+            
+            # Record history
+            session['history'].append({
+                "cmd": cmd,
+                "output": final_result,
+                "time": datetime.now()
+            })
+            if len(session['history']) > 100:
+                session['history'].pop(0)
                 
             session['last_active'] = datetime.now()
-            return output if output.strip() else "(No output)"
+            return final_result
             
         except Exception as e:
             return f"Execution error: {e}"
@@ -128,36 +144,66 @@ class SSHPlugin(Star):
     async def ssh_cmd(self, event: AstrMessageEvent, *, cmd: str = ""):
         """执行 SSH 命令。用法: /ssh <命令> 或 /ssh disconnect"""
         user_id = event.get_sender_id()
-
-        if cmd == "disconnect":
+        logger.info(f"SSH Plugin: Final command to execute: '{cmd}'")
+        
+        if cmd == "out":
             async with self.lock:
                 if user_id in self.sessions:
                     try:
                         self.sessions[user_id]["conn"].close()
+                        if "process" in self.sessions[user_id]:
+                            self.sessions[user_id]["process"].close()
                     except:
                         pass
                     del self.sessions[user_id]
-                    yield event.plain_result("✅ 已断开 SSH 连接。")
+                    yield event.plain_result("🔌 已断开 SSH 连接。")
                 else:
-                    yield event.plain_result("♨️ 当前没有活跃的 SSH 连接。")
+                    yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
+            return
+
+        if cmd == "log":
+            async with self.lock:
+                if user_id not in self.sessions:
+                    yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
+                    return
+                
+                history = self.sessions[user_id].get("history", [])
+                if not history:
+                    yield event.plain_result("📜 暂无执行记录。")
+                    return
+                
+                # Show last N records based on config
+                # "Function: view execution log" -> implies seeing what happened.
+                
+                log_size = self.config.get("log_size", 5)
+                
+                log_text = f"📜 SSH 执行记录 (最近 {log_size} 条):\n"
+                for record in history[-log_size:]:
+                    time_str = record["time"].strftime("%H:%M:%S")
+                    cmd_str = record["cmd"]
+                    # Truncate output preview
+                    out_preview = record["output"].replace('\n', ' ')[:50] + "..." if len(record["output"]) > 50 else record["output"].replace('\n', ' ')
+                    log_text += f"[{time_str}] $ {cmd_str}\n   -> {out_preview}\n"
+                
+                yield event.plain_result(log_text)
             return
 
         if not cmd:
-            yield event.plain_result("💫 请输入命令！用法: /ssh <命令>")
+            yield event.plain_result("请输入命令。用法: /ssh <命令>")
             return
 
         # Ensure connection
         try:
             session = await self._get_or_create_session(user_id)
         except ValueError:
-            yield event.plain_result("❌ 插件未配置，请在Astrbot中配置 SSH 连接信息。")
+            yield event.plain_result("❌ 插件未配置，请在后台配置 SSH 连接信息。")
             return
         except Exception as e:
-            yield event.plain_result(f"❌ 连接失败惹: {e}")
+            yield event.plain_result(f"❌ 连接失败: {e}")
             return
 
         # Execute
-        yield event.plain_result(f"执行中，请稍后...")
+        yield event.plain_result(f"执行中...")
         result = await self._execute_command(session, cmd)
         yield event.plain_result(result)
 

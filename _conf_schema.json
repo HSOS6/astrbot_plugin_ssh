@@ -37,6 +37,11 @@
         "type": "int",
         "default": 30,
         "hint": "SSH 会话无操作自动断开的时间，默认30分钟"
+    },
+    "log_size": {
+        "description": "日志记录条数",
+        "type": "int",
+        "default": 5,
+        "hint": "使用 /ssh log 指令时显示的最近命令执行记录条数"
     }
 }
-
