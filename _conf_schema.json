@@ -2,12 +2,12 @@
     "host": {
         "description": "SSH 主机地址(必填)‼️",
         "type": "string",
-        "default": "127.0.0.1",
-        "hint": "服务器 IP 或域名",
+        "default": "192.168.1.128",
+        "hint": "服务器 IP 或域名，例如: 192.168.1.114",
         "obvious_hint": true
     },
     "port": {
-        "description": "SSH 连接端口",
+        "description": "SSH 端口",
         "type": "int",
         "default": 22,
         "hint": "默认一般为 22"
@@ -20,28 +20,40 @@
         "obvious_hint": true
     },
     "password": {
-        "description": "SSH 连接密码",
+        "description": "SSH 密码",
         "type": "string",
-        "default": "123ABC（请修改此内容）",
-        "hint": "登录密码（明文存储，请注意安装环境安全）",
+        "default": "123456",
+        "hint": "登录密码（明文存储，请注意安全）",
         "obvious_hint": true
     },
     "timeout": {
         "description": "连接超时时间（秒）",
         "type": "int",
         "default": 10,
-        "hint": "SSH 连接超时时间，默认10秒"
+        "hint": "SSH 连接超时"
     },
     "idle_timeout": {
-        "description": "终端闲置断开时间（分钟）",
+        "description": "闲置断开时间（分钟）",
         "type": "int",
         "default": 30,
-        "hint": "SSH 会话无操作自动断开的时间，默认30分钟"
+        "hint": "SSH 会话无操作自动断开的时间（分钟）"
     },
     "log_size": {
         "description": "日志记录条数",
         "type": "int",
         "default": 5,
         "hint": "使用 /ssh log 指令时显示的最近命令执行记录条数"
+    },
+    "enable_dangerous_commands": {
+        "description": "允许高危命令",
+        "type": "bool",
+        "default": false,
+        "hint": "是否允许执行 rm -rf 等高危命令（慎用！）"
+    },
+    "known_hosts_path": {
+        "description": "known_hosts 文件路径",
+        "type": "string",
+        "default": "",
+        "hint": "SSH known_hosts 文件绝对路径，留空则不验证主机密钥（有中间人攻击风险）"
     }
 }
