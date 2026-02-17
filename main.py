@@ -8,7 +8,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Star, register, Context
 from astrbot.api import logger
 
-@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.2.0")
+@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.3.0")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -114,7 +114,10 @@ class SSHPlugin(Star):
         username = self.config.get("username", "root")
         password = self.config.get("password", "")
         timeout = self.config.get("timeout", 10)
-        known_hosts = self.config.get("known_hosts_path", None) # Default to None (insecure but standard for plugins)
+        
+        # Handle known_hosts: if empty or None, set to None to disable check (default behavior)
+        known_hosts_path = self.config.get("known_hosts_path", "")
+        known_hosts = known_hosts_path if known_hosts_path else None
         
         logger.info(f"SSH Plugin: Connecting to {username}@{host}:{port} ...")
         
