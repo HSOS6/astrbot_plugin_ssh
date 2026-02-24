@@ -65,6 +65,8 @@ https://github.com/HSOS6/astrbot_plugin_ssh
 - Fork炸弹及其他高危操作
 
 ## 📝 更新日志
+### v1.3.0
+- 修改了一些bug，增加了一些问题
 ### v1.2.0
 - 修改了一些问题，增加安全性
 ### v1.1.Beta
