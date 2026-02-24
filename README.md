@@ -34,10 +34,11 @@ https://github.com/HSOS6/astrbot_plugin_ssh
 
 | 配置项 | 描述 | 默认值 |
 | :--- | :--- | :--- |
-| `host` | SSH 服务器地址 (IP 或域名) | `192.168.1.128` |
+| `host` | SSH 服务器地址 (IP 或域名) | `192.168.1.1` |
 | `port` | SSH 端口 | `22` |
 | `username` | 登录用户名 | `xjy` |
 | `password` | 登录密码 | ` ` (空格) |
+| `private_key` | SSH 私钥内容 | ` ` (默认为空) |
 | `timeout` | 连接超时时间 (秒) | `10` |
 | `idle_timeout` | 闲置自动断开时间 (分钟) | `30` |
 
@@ -65,6 +66,8 @@ https://github.com/HSOS6/astrbot_plugin_ssh
 - Fork炸弹及其他高危操作
 
 ## 📝 更新日志
+### v1.3.1
+- 增加了密钥登录的功能，增加安全性
 ### v1.3.0
 - 修改了一些bug，增加了一些问题
 ### v1.2.0

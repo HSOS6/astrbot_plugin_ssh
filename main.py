@@ -8,7 +8,7 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Star, register, Context
 from astrbot.api import logger
 
-@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.3.0")
+@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.3.1")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -113,6 +113,7 @@ class SSHPlugin(Star):
         port = self.config.get("port", 22)
         username = self.config.get("username", "root")
         password = self.config.get("password", "")
+        private_key_content = self.config.get("private_key", "").strip()
         timeout = self.config.get("timeout", 10)
         
         # Handle known_hosts: if empty or None, set to None to disable check (default behavior)
@@ -122,11 +123,22 @@ class SSHPlugin(Star):
         logger.info(f"SSH Plugin: Connecting to {username}@{host}:{port} ...")
         
         try:
+            client_keys = None
+            if private_key_content:
+                try:
+                    client_keys = [asyncssh.import_private_key(private_key_content)]
+                    logger.info("SSH Plugin: Using private key for authentication.")
+                except Exception as key_err:
+                    logger.error(f"SSH Plugin: Failed to import private key: {key_err}")
+                    # Fallback to password if import fails? Or fail early?
+                    # Let's try to continue with password if available
+            
             conn = await asyncssh.connect(
                 host,
                 port=port,
                 username=username,
-                password=password,
+                password=password if not client_keys else None,
+                client_keys=client_keys,
                 known_hosts=known_hosts,
                 login_timeout=timeout
             )

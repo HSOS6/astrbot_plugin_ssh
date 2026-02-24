@@ -23,8 +23,15 @@
         "description": "SSH 密码",
         "type": "string",
         "default": "123456",
-        "hint": "登录密码（明文存储，请注意安全）",
+        "hint": "登录密码（明文存储，请注意安全；若使用密钥登录则可不填）",
         "obvious_hint": true
+    },
+    "private_key": {
+        "description": "SSH 私钥内容",
+        "type": "text",
+        "default": "",
+        "hint": "用于密钥登录的私钥内容（PEM 格式，以 -----BEGIN ... 开头）。若填写则优先使用密钥登录。",
+        "obvious_hint": false
     },
     "timeout": {
         "description": "连接超时时间（秒）",
