@@ -1,5 +1,6 @@
 import asyncio
 import re
+import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 
@@ -8,13 +9,118 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Star, register, Context
 from astrbot.api import logger
 
-@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.3.1")
+DEFAULT_WHITELIST = [
+    "ls", "cat", "head", "tail", "grep", "find", "wc", "sort", "uniq",
+    "df", "du", "free", "top", "htop", "ps", "uptime", "uname", "whoami",
+    "id", "hostname", "date", "cal", "echo", "pwd", "env", "printenv",
+    "file", "stat", "which", "whereis", "type", "lsblk", "lscpu", "lsof",
+    "netstat", "ss", "ip", "ifconfig", "ping", "traceroute", "dig", "nslookup",
+    "journalctl", "dmesg", "systemctl status", "service --status-all",
+    "docker ps", "docker images", "docker logs", "docker stats", "docker inspect",
+    "git status", "git log", "git diff", "git branch", "git remote",
+    "pip list", "pip show", "npm list", "node -v", "python --version",
+    "crontab -l", "last", "w", "who", "history",
+    "nginx -t", "nginx -T", "curl", "wget",
+    "tar", "zip", "unzip", "gzip", "gunzip", "cp", "mv", "mkdir", "touch",
+    "apt list", "yum list", "dpkg -l", "rpm -qa",
+    "sed", "awk", "cut", "tr", "tee", "xargs", "less", "more", "diff",
+    "screen -ls", "tmux ls", "pm2 list", "pm2 logs", "supervisorctl status",
+    "cd", "source", "export", "alias", "chmod", "chown",
+    "systemctl start", "systemctl stop", "systemctl restart", "systemctl enable", "systemctl disable",
+    "nano", "vim", "vi",
+    "pip install", "npm install", "apt install", "apt update", "apt upgrade",
+    "yum install", "yum update",
+    "git pull", "git push", "git clone", "git checkout", "git merge", "git add", "git commit",
+]
+
+BLOCKED_PATTERNS = [
+    r"rm\s+.*-r", r"rm\s+.*-f", r"rm\s+-\w*r",
+    r"mkfs", r"dd\s+if=", r"shutdown", r"reboot", r"init\s+0", r"poweroff",
+    r":\(\)\s*\{\s*:\s*\|\s*:\s*\&\s*\}\s*;",
+    r"wget\s+.*\|.*sh", r"curl\s+.*\|.*sh",
+    r">\s*/dev/sd[a-z]", r">\s*/dev/nvme",
+    r"chmod\s+-R\s+777",
+    r"kill\s+-9\s+-1",
+    r"useradd", r"usermod", r"groupadd",
+    r"iptables", r"ufw",
+    r"rm\s+-", r"rm\s+/",
+    r"python\s+-c", r"perl\s+-e", r"ruby\s+-e",
+    r"nc\s+-[lp]", r"ncat", r"socat",
+    r"crontab\s+-[re]",
+    r"passwd",
+    r"visudo", r"sudoers",
+    r"eval\s+", r"\bexec\s+",
+]
+
+SENSITIVE_PATTERNS = [
+    (re.compile(r"(password|passwd|pwd)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=***"),
+    (re.compile(r"(token|api_key|apikey|secret|access_key|secret_key)\s*[=:]\s*\S+", re.IGNORECASE), r"\1=***"),
+    (re.compile(r"(Authorization|Bearer)\s+\S+", re.IGNORECASE), r"\1 ***"),
+    (re.compile(r"-----BEGIN\s+\w+\s+(?:PRIVATE\s+)?KEY-----[\s\S]*?-----END\s+\w+\s+(?:PRIVATE\s+)?KEY-----"), "***PRIVATE_KEY***"),
+    (re.compile(r"(?<!\w)[A-Za-z0-9+/]{40,}={0,2}(?!\w)"), "***BASE64***"),
+    (re.compile(r"mysql://\S+|postgres://\S+|redis://\S+|mongodb://\S+", re.IGNORECASE), "***DB_URI***"),
+]
+
+
+def _sanitize(text: str) -> str:
+    for pattern, replacement in SENSITIVE_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _get_known_hosts_path(config: dict) -> str:
+    path = config.get("known_hosts_path", "")
+    if not path:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "known_hosts")
+    return path
+
+
+def _ensure_known_hosts_file(path: str):
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w') as f:
+            pass
+        logger.info(f"SSH Plugin: Created known_hosts file: {path}")
+
+
+async def _tofu_scan_host_key(host: str, port: int, known_hosts_path: str, timeout: int = 10):
+    _ensure_known_hosts_file(known_hosts_path)
+
+    file_size = os.path.getsize(known_hosts_path)
+    if file_size > 0:
+        return
+
+    logger.info(f"SSH Plugin: known_hosts is empty, scanning host key from {host}:{port} (TOFU)...")
+    try:
+        server_key = await asyncio.wait_for(
+            asyncssh.get_server_host_key(host, port),
+            timeout=timeout
+        )
+        if server_key is not None:
+            key_data = server_key.export_public_key('openssh')
+            if isinstance(key_data, bytes):
+                key_data = key_data.decode('ascii').strip()
+
+            host_entry = f"[{host}]:{port}" if port != 22 else host
+            line = f"{host_entry} {key_data}\n"
+
+            with open(known_hosts_path, 'a') as f:
+                f.write(line)
+            logger.info(f"SSH Plugin: TOFU - Saved host key for {host}:{port} to {known_hosts_path}")
+        else:
+            logger.error(f"SSH Plugin: Failed to retrieve host key from {host}:{port}")
+    except Exception as e:
+        logger.error(f"SSH Plugin: TOFU host key scan failed: {type(e).__name__}: {e}")
+
+
+@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.4.0")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
         self.sessions: Dict[str, Any] = {}  # user_id -> {conn, process, stdin, stdout, last_active, history}
         self.lock = asyncio.Lock()
+        self.pending_confirms: Dict[str, Dict[str, Any]] = {}
         
         # Start cleanup task and store reference
         self.cleanup_task = asyncio.create_task(self._cleanup_sessions())
@@ -75,30 +181,32 @@ class SSHPlugin(Star):
             except Exception as e:
                 logger.error(f"Error in cleanup task: {e}")
 
-    def _is_safe_command(self, command: str) -> bool:
-        """Check if command is safe to execute."""
-        # Allow dangerous commands if explicitly enabled in config (default False)
+    def _check_command(self, command: str) -> str:
         if self.config.get("enable_dangerous_commands", False):
-            return True
+            return "allow"
 
-        # Expanded blacklist
-        blocked_patterns = [
-            r"rm\s+.*-r", r"rm\s+.*-f", r"rm\s+-\w*r", # rm -rf variants
-            r"mkfs", r"dd\s+if=", r"shutdown", r"reboot", r"init\s+0", r"poweroff",
-            r":\(\)\s*\{\s*:\s*\|\s*:\s*\&\s*\}\s*;", # fork bomb
-            r"wget\s+.*\|.*sh", r"curl\s+.*\|.*sh", # pipe to shell
-            r">\s*/dev/sd[a-z]", r">\s*/dev/nvme", # overwrite disk
-            r"chmod\s+-R\s+777", r"chown\s+-R",
-            r"kill\s+-9\s+-1", # kill all
-            r"useradd", r"usermod", r"groupadd", # user management
-            r"iptables", r"ufw", # firewall
-        ]
-        
-        # Check for dangerous patterns
-        for pattern in blocked_patterns:
+        for pattern in BLOCKED_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
-                return False
-        return True
+                return "blocked"
+
+        whitelist = self.config.get("command_whitelist", [])
+        if not whitelist:
+            whitelist = DEFAULT_WHITELIST
+
+        cmd_base = command.strip().split()[0] if command.strip() else ""
+
+        for allowed in whitelist:
+            allowed_parts = allowed.strip().split()
+            if not allowed_parts:
+                continue
+            if cmd_base == allowed_parts[0]:
+                if len(allowed_parts) == 1:
+                    return "allow"
+                prefix = allowed.strip()
+                if command.strip().startswith(prefix):
+                    return "allow"
+
+        return "confirm"
 
     async def _get_or_create_session(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Get existing session or create a new one."""
@@ -116,12 +224,11 @@ class SSHPlugin(Star):
         private_key_content = self.config.get("private_key", "").strip()
         timeout = self.config.get("timeout", 10)
         
-        # Handle known_hosts: if empty or None, set to None to disable check (default behavior)
-        known_hosts_path = self.config.get("known_hosts_path", "")
-        known_hosts = known_hosts_path if known_hosts_path else None
-        
-        logger.info(f"SSH Plugin: Connecting to {username}@{host}:{port} ...")
-        
+        known_hosts_path = _get_known_hosts_path(self.config)
+        await _tofu_scan_host_key(host, port, known_hosts_path, timeout)
+
+        logger.info(f"SSH Plugin: Connecting to {username}@{host}:{port} with known_hosts: {known_hosts_path}")
+
         try:
             client_keys = None
             if private_key_content:
@@ -139,7 +246,7 @@ class SSHPlugin(Star):
                 username=username,
                 password=password if not client_keys else None,
                 client_keys=client_keys,
-                known_hosts=known_hosts,
+                known_hosts=known_hosts_path,
                 login_timeout=timeout
             )
             
@@ -188,67 +295,77 @@ class SSHPlugin(Star):
         return text
 
     async def _execute_interactive(self, session: Dict[str, Any], cmd: str) -> str:
-        """Send command to interactive shell and read output."""
         stdin = session['stdin']
         stdout = session['stdout']
         
-        # Send command
+        max_bytes = self.config.get("max_output_bytes", 32768)
+        max_exec_time = self.config.get("max_exec_time", 30)
+        truncated = False
+        total_bytes = 0
+        start_time = datetime.now()
+
         stdin.write(cmd + '\n')
-        
-        # Read output with timeout
-        # We wait a bit for output to appear, then read until it pauses
         await asyncio.sleep(0.5)
         
         raw_chunks = []
         try:
             while True:
+                elapsed = (datetime.now() - start_time).total_seconds()
+                if elapsed >= max_exec_time:
+                    truncated = True
+                    logger.warning(f"SSH Plugin: Command exceeded max exec time ({max_exec_time}s), truncating.")
+                    break
+
                 try:
                     data = await asyncio.wait_for(stdout.read(4096), timeout=1.0)
                     if not data: break
-                    # Collect raw bytes (or str if asyncssh decided to decode)
-                    # asyncssh create_process default encoding is None -> bytes
-                    # If encoding was set, it's str. We didn't set encoding=... in create_process call above (default bytes)
-                    # Wait, create_process(..., encoding=None) returns bytes.
-                    # But if we received bytes, we append bytes.
+
+                    chunk_size = len(data)
+                    if total_bytes + chunk_size > max_bytes:
+                        remaining = max_bytes - total_bytes
+                        if remaining > 0:
+                            raw_chunks.append(data[:remaining])
+                            total_bytes += remaining
+                        truncated = True
+                        logger.warning(f"SSH Plugin: Output exceeded max bytes ({max_bytes}), truncating.")
+                        break
+
                     raw_chunks.append(data)
+                    total_bytes += chunk_size
                 except asyncio.TimeoutError:
                     break
         except Exception as e:
             logger.error(f"Error reading SSH output: {e}")
             
-        # Combine chunks
         full_text = ""
         if raw_chunks:
-            # Check type of first chunk
             if isinstance(raw_chunks[0], bytes):
-                # Join bytes then decode
                 full_bytes = b"".join(raw_chunks)
                 full_text = full_bytes.decode('utf-8', errors='replace')
             else:
-                # Join strings
                 full_text = "".join(raw_chunks)
         
-        # Clean ANSI codes from the complete string to ensure sequences aren't split
         full_text = self._clean_ansi(full_text)
-        
-        # Convert CRLF to LF to fix double spacing or weird line endings
         full_text = full_text.replace('\r\n', '\n').replace('\r', '\n')
         
-        # Limit lines
         lines = full_text.split('\n')
         if len(lines) > 50:
             lines = lines[-50:]
+            truncated = True
             
         final_result = "\n".join(lines) if lines else "(无新输出)"
+
+        if truncated:
+            final_result += "\n\n⚠️ 输出已截断（超出限制：最大 {}KB / {}s）".format(max_bytes // 1024, max_exec_time)
         
-        # Record history
-        session['history'].append({
-            "cmd": cmd,
-            "output": final_result,
-            "time": datetime.now()
-        })
-        if len(session['history']) > 100:
-            session['history'].pop(0)
+        if self.config.get("enable_history", True):
+            session['history'].append({
+                "cmd": _sanitize(cmd),
+                "output": _sanitize(final_result),
+                "time": datetime.now()
+            })
+            if len(session['history']) > 100:
+                session['history'].pop(0)
             
         session['last_active'] = datetime.now()
         return final_result
@@ -261,16 +378,14 @@ class SSHPlugin(Star):
         /ssh <命令>  - 执行命令
         /ssh log    - 查看最近日志
         /ssh out    - 断开连接
+        /ssh yes    - 确认执行待确认命令
+        /ssh no     - 取消待确认命令
         """
         user_id = event.get_sender_id()
 
         # Robust command parsing
         raw_msg = event.message_str.strip()
-        # Mask sensitive info in logs (simple heuristic)
-        log_cmd = cmd
-        if any(s in cmd.lower() for s in ["pass", "token", "key", "secret"]):
-            log_cmd = "***"
-        logger.info(f"SSH Plugin: Received command from {user_id}: '{log_cmd}'")
+        logger.info(f"SSH Plugin: Received command from {user_id}: '{_sanitize(cmd)}'")
 
         # Regex extract if argument parsing failed
         match = re.match(r'^/?ssh\s+(.*)', raw_msg, re.IGNORECASE)
@@ -300,18 +415,62 @@ class SSHPlugin(Star):
                 yield result
             return
 
-        # Execute normal command
+        if cmd == "yes" or cmd == "no":
+            async for result in self._handle_confirm(event, user_id, cmd == "yes"):
+                yield result
+            return
+
+        check_result = self._check_command(cmd)
+
+        if check_result == "blocked":
+            yield event.plain_result(f"🚫 命令被拦截: 检测到高危操作，已阻止执行。\n命令: {_sanitize(cmd)}")
+            return
+
+        if check_result == "confirm":
+            self.pending_confirms[user_id] = {
+                "cmd": cmd,
+                "time": datetime.now()
+            }
+            yield event.plain_result(
+                f"⚠️ 该命令不在白名单中，需要二次确认：\n"
+                f"命令: {_sanitize(cmd)}\n\n"
+                f"发送 /ssh yes 确认执行，/ssh no 取消。\n"
+                f"（30秒内有效）"
+            )
+            return
+
+        async for result in self._do_execute(event, user_id, cmd):
+            yield result
+
+    async def _handle_confirm(self, event: AstrMessageEvent, user_id: str, confirmed: bool):
+        pending = self.pending_confirms.pop(user_id, None)
+        if not pending:
+            yield event.plain_result("⚠️ 当前没有待确认的命令。")
+            return
+
+        if datetime.now() - pending["time"] > timedelta(seconds=30):
+            yield event.plain_result("⏰ 确认已超时，请重新发送命令。")
+            return
+
+        if not confirmed:
+            yield event.plain_result("✅ 已取消执行。")
+            return
+
+        cmd = pending["cmd"]
+        async for result in self._do_execute(event, user_id, cmd):
+            yield result
+
+    async def _do_execute(self, event: AstrMessageEvent, user_id: str, cmd: str):
         try:
             session = await self._get_or_create_session(user_id)
         except Exception as e:
-            yield event.plain_result(f"❌ 连接失败: {e}")
+            logger.error(f"SSH Plugin: Connection failed for {user_id}: {e}")
+            yield event.plain_result("❌ SSH 连接失败，请检查服务器配置。详见日志。")
             return
 
         yield event.plain_result(f"执行中...")
         result = await self._execute_interactive(session, cmd)
-        
-        # Convert to image if enabled/needed (e.g. long output)
-        # Here we follow previous logic: text to image for result
+
         if result and result.strip() != "(无新输出)":
             try:
                 url = await self.text_to_image(result)
@@ -331,8 +490,10 @@ class SSHPlugin(Star):
                 yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
 
     async def _handle_log(self, event: AstrMessageEvent, user_id: str):
-        # Read-only access to session, check if exists
-        # We need lock to ensure session doesn't vanish, but we can just check
+        if not self.config.get("enable_history", True):
+            yield event.plain_result("⚠️ 历史记录已关闭。")
+            return
+
         session = None
         async with self.lock:
             session = self.sessions.get(user_id)
@@ -359,40 +520,28 @@ class SSHPlugin(Star):
         
         yield event.plain_result(log_text)
 
-    # Register aliases for subcommands to ensure they appear in help system if supported
-    # Note: These are fallback handlers if the user types /ssh_log directly
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("ssh_log") 
-    async def ssh_log_cmd(self, event: AstrMessageEvent):
-        """查看 SSH 日志"""
-        async for result in self._handle_log(event, event.get_sender_id()):
-            yield result
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @filter.command("ssh_out")
-    async def ssh_out_cmd(self, event: AstrMessageEvent):
-        """断开 SSH 连接"""
-        async for result in self._handle_out(event, event.get_sender_id()):
-            yield result
-
     @filter.permission_type(filter.PermissionType.ADMIN)
     @filter.llm_tool(name="ssh_exec")
     async def ssh_tool(self, event: AstrMessageEvent, command: str) -> str:
         """
-        Execute a command on the remote SSH server (Interactive Shell).
-        Only allowed for non-dangerous commands.
+        Execute a whitelisted command on the remote SSH server (Interactive Shell).
+        Commands not in whitelist or matching blocked patterns will be rejected.
         
         Args:
             command (string): The command to execute.
         """
-        if not self._is_safe_command(command):
-            return "❌ Command blocked: Potential high-risk command detected."
+        check_result = self._check_command(command)
+        if check_result == "blocked":
+            return f"🚫 命令被拦截: 检测到高危操作，已阻止执行。\n命令: {_sanitize(command)}"
+        if check_result == "confirm":
+            return f"⚠️ 该命令不在白名单中，LLM 无法自动执行非白名单命令，请通过 /ssh {_sanitize(command)} 手动执行并确认。"
 
         user_id = event.get_sender_id()
         
         try:
             session = await self._get_or_create_session(user_id)
         except Exception as e:
-            return f"Error connecting to SSH: {e}"
+            logger.error(f"SSH Plugin: LLM tool connection failed for {user_id}: {e}")
+            return "SSH 连接失败，请检查服务器配置。"
 
         return await self._execute_interactive(session, command)

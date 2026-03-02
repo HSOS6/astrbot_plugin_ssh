@@ -51,16 +51,40 @@
         "default": 5,
         "hint": "使用 /ssh log 指令时显示的最近命令执行记录条数"
     },
+    "enable_history": {
+        "description": "启用历史记录",
+        "type": "bool",
+        "default": true,
+        "hint": "是否记录命令执行历史（关闭后 /ssh log 不可用，减少敏感信息留存）"
+    },
     "enable_dangerous_commands": {
         "description": "允许高危命令",
         "type": "bool",
         "default": false,
-        "hint": "是否允许执行 rm -rf 等高危命令（慎用！）"
+        "hint": "开启后跳过所有白名单和黑名单检查，允许执行任意命令（严重警告！慎用！！）"
+    },
+    "command_whitelist": {
+        "description": "命令白名单",
+        "type": "list",
+        "default": [],
+        "hint": "自定义允许直接执行的命令前缀列表，留空则使用内置默认白名单。不在白名单中的命令需要二次确认，LLM 无法自动执行。"
+    },
+    "max_output_bytes": {
+        "description": "最大输出字节数",
+        "type": "int",
+        "default": 32768,
+        "hint": "单次命令输出的最大读取字节数（默认 32KB），超出后截断显示"
+    },
+    "max_exec_time": {
+        "description": "单命令最大执行时长（秒）",
+        "type": "int",
+        "default": 30,
+        "hint": "单条命令的最大执行等待时间（秒），超时后截断输出"
     },
     "known_hosts_path": {
         "description": "known_hosts 文件路径",
         "type": "string",
         "default": "",
-        "hint": "SSH known_hosts 文件绝对路径，留空则不验证主机密钥（有中间人攻击风险）"
+        "hint": "SSH known_hosts 文件绝对路径，留空则使用插件目录下的 known_hosts 文件（首次连接自动获取并保存主机密钥）"
     }
 }
