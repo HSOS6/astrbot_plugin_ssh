@@ -168,7 +168,7 @@ async def _tofu_scan_host_key(host: str, port: int, known_hosts_path: str, timeo
         logger.error(f"SSH Plugin: TOFU host key scan failed: {type(e).__name__}: {e}")
 
 
-@register("astrbot_plugin_ssh", "星见雅（xinjianya）", "远程SSH执行器", "v1.4.0")
+@register("astrbot_plugin_ssh", "星见雅（xinjianya）", "远程SSH执行器", "v1.5.0")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
