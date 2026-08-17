@@ -44,8 +44,7 @@ BLOCKED_PATTERNS = [
     r"useradd", r"usermod", r"groupadd",
     r"iptables", r"ufw",
     r"rm\s+-", r"rm\s+/",
-    r"python\d*\s+-[ci]\b", r"perl\s+-e", r"ruby\s+-e",
-    r"php\s+-r\b", r"node\s+(-e|-p)\b",
+    r"python\s+-c", r"perl\s+-e", r"ruby\s+-e",
     r"nc\s+-[lp]", r"ncat", r"socat",
     r"crontab\s+-[re]",
     r"passwd",
@@ -69,40 +68,6 @@ def _sanitize(text: str) -> str:
     return text
 
 
-def _split_command(command: str) -> list:
-    """按 shell 分隔符拆分命令为子命令列表，跳过引号内的内容喵
-
-    分隔符包括: ; && || | 换行，以及 # 开头的注释喵
-    """
-    parts = []
-    current = []
-    quote = None  # 当前未闭合的引号类型喵
-    i = 0
-    while i < len(command):
-        ch = command[i]
-        if quote:
-            if ch == quote:
-                quote = None
-            current.append(ch)
-        elif ch in ('"', "'"):
-            quote = ch
-            current.append(ch)
-        elif ch == '#':
-            # 注释开始，后面的内容直接丢弃喵
-            break
-        elif ch in (';', '|', '&', '\n'):
-            # && 和 || 是双字符分隔符，跳过第二个字符喵
-            if ch in ('&', '|') and i + 1 < len(command) and command[i + 1] == ch:
-                i += 1
-            parts.append(''.join(current))
-            current = []
-        else:
-            current.append(ch)
-        i += 1
-    parts.append(''.join(current))
-    return [p.strip() for p in parts if p.strip()]
-
-
 def _get_known_hosts_path(config: dict) -> str:
     path = config.get("known_hosts_path", "")
     if not path:
@@ -112,40 +77,20 @@ def _get_known_hosts_path(config: dict) -> str:
 
 def _ensure_known_hosts_file(path: str):
     if not os.path.exists(path):
-        # dirname 对裸文件名会返回空串，需要兜底跳过建目录喵
-        dir_name = os.path.dirname(path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             pass
         logger.info(f"SSH Plugin: Created known_hosts file: {path}")
-
-
-def _host_in_known_hosts(path: str, host: str, port: int) -> bool:
-    """检查指定主机的条目是否已存在于 known_hosts 中喵"""
-    host_entry = f"[{host}]:{port}" if port != 22 else host
-    try:
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                # 每行格式: 主机条目 密钥类型 密钥内容，行首可能带 @revoked/@cert 前缀喵
-                fields = line.split()
-                if fields and fields[0].lstrip('@') == host_entry:
-                    return True
-    except FileNotFoundError:
-        pass
-    return False
 
 
 async def _tofu_scan_host_key(host: str, port: int, known_hosts_path: str, timeout: int = 10):
     _ensure_known_hosts_file(known_hosts_path)
 
     file_size = os.path.getsize(known_hosts_path)
-    # TOFU 按主机条目判断，而非整个文件非空才扫描喵
-    # 这样连接新主机（换了 IP/端口）也能自动完成首次信任喵
-    if file_size > 0 and _host_in_known_hosts(known_hosts_path, host, port):
+    if file_size > 0:
         return
 
-    logger.info(f"SSH Plugin: host entry not found, scanning host key from {host}:{port} (TOFU)...")
+    logger.info(f"SSH Plugin: known_hosts is empty, scanning host key from {host}:{port} (TOFU)...")
     try:
         server_key = await asyncio.wait_for(
             asyncssh.get_server_host_key(host, port),
@@ -168,7 +113,7 @@ async def _tofu_scan_host_key(host: str, port: int, known_hosts_path: str, timeo
         logger.error(f"SSH Plugin: TOFU host key scan failed: {type(e).__name__}: {e}")
 
 
-@register("astrbot_plugin_ssh", "星见雅（xinjianya）", "远程SSH执行器", "v1.4.0")
+@register("astrbot_plugin_ssh", "5060ti个马力的6999", "远程SSH执行器", "v1.4.0")
 class SSHPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -214,15 +159,7 @@ class SSHPlugin(Star):
                 await asyncio.sleep(60)
                 now = datetime.now()
                 idle_timeout = self.config.get("idle_timeout", 30)
-
-                # 顺带清理过期的待确认命令，防止残留喵
-                expired = [
-                    uid for uid, p in self.pending_confirms.items()
-                    if now - p["time"] > timedelta(seconds=30)
-                ]
-                for uid in expired:
-                    self.pending_confirms.pop(uid, None)
-
+                
                 # Snapshot keys to avoid holding lock during cleanup iteration
                 async with self.lock:
                     user_ids = list(self.sessions.keys())
@@ -248,7 +185,6 @@ class SSHPlugin(Star):
         if self.config.get("enable_dangerous_commands", False):
             return "allow"
 
-        # 先对完整命令做黑名单检查，防止拆分破坏匹配喵
         for pattern in BLOCKED_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
                 return "blocked"
@@ -256,25 +192,6 @@ class SSHPlugin(Star):
         whitelist = self.config.get("command_whitelist", [])
         if not whitelist:
             whitelist = DEFAULT_WHITELIST
-
-        # 命令替换语法无法安全拆分检查，一律要求人工确认喵
-        if "$(" in command or "`" in command:
-            return "confirm"
-
-        # 按 ; && || | 换行 拆分子命令，逐条检查，防止拼接绕过喵
-        for sub_cmd in _split_command(command):
-            result = self._check_single_command(sub_cmd, whitelist)
-            if result != "allow":
-                # 任一子命令命中黑名单或不在白名单，整体不放行喵
-                return result
-
-        return "allow"
-
-    def _check_single_command(self, command: str, whitelist: list) -> str:
-        """检查单条子命令：黑名单直接拦截，白名单带边界匹配喵"""
-        for pattern in BLOCKED_PATTERNS:
-            if re.search(pattern, command, re.IGNORECASE):
-                return "blocked"
 
         cmd_base = command.strip().split()[0] if command.strip() else ""
 
@@ -286,8 +203,7 @@ class SSHPlugin(Star):
                 if len(allowed_parts) == 1:
                     return "allow"
                 prefix = allowed.strip()
-                # 前缀匹配必须带空格边界，防止 docker psx 冒充 docker ps 喵
-                if command == prefix or command.startswith(prefix + " "):
+                if command.strip().startswith(prefix):
                     return "allow"
 
         return "confirm"
@@ -340,7 +256,7 @@ class SSHPlugin(Star):
             # Consume banner
             try:
                 await asyncio.wait_for(process.stdout.read(4096), timeout=1.0)
-            except Exception:
+            except (asyncio.TimeoutError, Exception):
                 pass
 
             session_data = {
@@ -420,11 +336,7 @@ class SSHPlugin(Star):
                     break
         except Exception as e:
             logger.error(f"Error reading SSH output: {e}")
-
-        # 远端 shell 已退出时抛错，让上层清理死会话喵
-        if not raw_chunks and session["process"].exit_status is not None:
-            raise ConnectionError("远端 Shell 进程已退出")
-
+            
         full_text = ""
         if raw_chunks:
             if isinstance(raw_chunks[0], bytes):
@@ -557,38 +469,25 @@ class SSHPlugin(Star):
             return
 
         yield event.plain_result(f"执行中...")
-        try:
-            result = await self._execute_interactive(session, cmd)
-        except Exception as e:
-            # 会话已失效（如 SSH 连接断开），清理死会话避免后续命令持续失败喵
-            logger.error(f"SSH Plugin: Session dead for {user_id}: {e}")
-            async with self.lock:
-                # 仅当映射里还是这个会话对象时才移除，避免误删并发新建的会话喵
-                if self.sessions.get(user_id) is session:
-                    del self.sessions[user_id]
-            await self._close_session(session)
-            yield event.plain_result("❌ SSH 会话已断开，已自动清理，请重新执行命令。")
-            return
+        result = await self._execute_interactive(session, cmd)
 
         if result and result.strip() != "(无新输出)":
             try:
                 url = await self.text_to_image(result)
                 yield event.image_result(url)
-            except Exception:
+            except:
                 yield event.plain_result(f"💻 终端输出:\n{result}")
         else:
             yield event.plain_result(f"💻 终端输出:\n{result}")
 
     async def _handle_out(self, event: AstrMessageEvent, user_id: str):
-        # 锁内只取走会话，关闭与发消息放到锁外，避免阻塞其他用户喵
         async with self.lock:
-            session = self.sessions.pop(user_id, None)
-
-        if session:
-            await self._close_session(session)
-            yield event.plain_result("🔌 已断开 SSH 连接。")
-        else:
-            yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
+            if user_id in self.sessions:
+                await self._close_session(self.sessions[user_id])
+                del self.sessions[user_id]
+                yield event.plain_result("🔌 已断开 SSH 连接。")
+            else:
+                yield event.plain_result("⚠️ 当前没有活跃的 SSH 连接。")
 
     async def _handle_log(self, event: AstrMessageEvent, user_id: str):
         if not self.config.get("enable_history", True):
