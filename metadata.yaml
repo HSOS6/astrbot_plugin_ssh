@@ -1,6 +1,12 @@
 name: astrbot_plugin_ssh
 display_name: 远程SSH执行器
 desc: SSH 远程命令执行插件，支持 LLM 调用
-version: v1.5.0
+version: v1.5.1
 author: 星见雅（xinjianya）
 repo: https://github.com/HSOS6/astrbot_plugin_ssh
+tags:
+  - "SSH"
+  - "远程连接"
+  - "网络安全"
+  - "LLM操作"
+  - "终端操作"
